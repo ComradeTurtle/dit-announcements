@@ -1,9 +1,9 @@
 const { readFileSync, writeFileSync } = require('fs');
 const { NodeHtmlMarkdown } = require('node-html-markdown');
 const jsdom = require('jsdom');
-let currentId = parseInt(readFileSync('cid.txt').toString());
+const fetch = require('node-fetch');
 
-require('dotenv').config();
+let currentId = parseInt(readFileSync('/opt/node/ditannouncements/cid.txt').toString());
 
 const collect = async (id) => {
     return new Promise(async(resolve, reject) => {
@@ -28,6 +28,7 @@ const init = async () => {
     let isOkCount = 0;
     let tempId = currentId;
 
+    let toBeSent = [];
     while (isOk) {
         console.log(`Trying announcement ID ${tempId+1}`)
         await collect(tempId+1).then(async (res) => {
@@ -35,14 +36,31 @@ const init = async () => {
             console.log(`ID ${tempId} success, ${res.title}, posting webhook..`);
             console.log(res.content);
 
-            await fetch(process.env.WEBHOOK_URL, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    content: `## Νέα ανακοίνωση τμήματος\n## Τίτλος: **${res.title}**\n\n${res.content}\n\n*Διαβάστε την ανακοίνωση [στην σελίδα του τμήματος](https://www.dit.uoi.gr/news.php?sa=view_new&id=${tempId})*`
-                })
+            let metadata = res.content.split('---')[0].split('\n');
+            let fields = []
+            metadata.forEach((field) => {
+                if (field.includes('Καταχωρήθηκε')) fields.push({name: 'Καταχωρήθηκε:', value: field.split(':** ')[1].trim(), inline: true})
+                else if (field.includes('Τελευταία ενημέρωση')) fields.push({name: 'Τελευταία ενημέρωση:', value: field.split(':** ')[1].trim(), inline: true})
+                else if (field.includes('Ημερομηνία λήξης')) fields.push({name: 'Ημερομηνία λήξης:', value: field.split(':** ')[1].trim(), inline: true})
+                else if (field.includes('Κατηγορία')) fields.push({name: 'Κατηγορία:', value: field.split(':** ')[1].trim(), inline: true})
+            })
+
+            fields.push({name: '\u200B', value: res.content.split('---')[1].trim()});
+            toBeSent.push({
+                "content": "@everyone",
+                "embeds": [
+                    {
+                        "type": "rich",
+                        "title": `Νέα ανακοίνωση τμήματος`,
+                        "description": `Τίτλος: ${res.title}`,
+                        "color": 0x00FFFF,
+                        "fields": fields,
+                        "url": `https://www.dit.uoi.gr/news.php?sa=view_new&id=${tempId}`,
+                        "footer": {
+                            "text": "Announcement webhook by @ComradeTurtle"
+                        }
+                    }
+                ]
             })
         }).catch((err) => {
             //* Retry mechanism. If 3 consecutive IDs fail, save the last successful ID and exit.
@@ -55,10 +73,22 @@ const init = async () => {
                 isOkCount++;
             } else {
                 writeFileSync('cid.txt', (tempId - isOkCount).toString());
-                process.exit();
+                isOk = false;
             }
         })
     }
+
+    // toBeSent.reverse();
+    for (const an of toBeSent) {
+        await fetch(process.env.WEBHOOK_URL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(an)
+        }).catch((err) => console.log(err))
+    }
+    process.exit();
 }
 
 init();
